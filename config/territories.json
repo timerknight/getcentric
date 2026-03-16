@@ -1,0 +1,34 @@
+{
+  "territories": {
+    "sacramento": {
+      "city": "Sacramento",
+      "state": "CA",
+      "country": "US",
+      "zip_codes": [
+        "95814", "95815", "95816", "95817", "95818", "95819",
+        "95820", "95821", "95822", "95823", "95824", "95825",
+        "95826", "95827", "95828", "95829", "95831", "95832",
+        "95833", "95834", "95835", "95838",
+        "95630", "95662", "95670", "95742", "95757", "95758",
+        "95608", "95610", "95621", "95624", "95626", "95628",
+        "95648", "95660", "95661", "95677", "95678", "95693",
+        "95762", "95765"
+      ],
+      "search_queries": ["CPA firm", "tax accountant", "accounting firm", "certified public accountant"],
+      "showcase_url": "https://centric.design"
+    },
+    "oakville": {
+      "city": "Oakville",
+      "state": "ON",
+      "country": "CA",
+      "zip_codes": [
+        "L6H", "L6J", "L6K", "L6L", "L6M",
+        "L7L", "L7M", "L7N", "L7P", "L7R", "L7S", "L7T",
+        "L9T", "L9W", "L0P",
+        "L5A", "L5B", "L5C", "L5E", "L5G", "L5H", "L5J", "L5K", "L5L", "L5M", "L5N"
+      ],
+      "search_queries": ["CPA firm", "accountant", "accounting firm", "chartered professional accountant"],
+      "showcase_url": "https://centric.design"
+    }
+  }
+}
