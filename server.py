@@ -238,8 +238,8 @@ Rules: Subject references firm name. Opening compliments their practice. Body ci
 
 Return ONLY JSON (no markdown fences):
 {{"subject": "...", "preview_text": "First 80 chars", "body": "Full email with \\n line breaks"}}"""
-
-    try:
+    
+try:
         response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.4, max_output_tokens=1000))
         response_text = response.text
         json_str = response_text
@@ -247,8 +247,14 @@ Return ONLY JSON (no markdown fences):
             json_str = json_str.split("```json")[1].split("```")[0]
         elif "```" in json_str:
             json_str = json_str.split("```")[1].split("```")[0]
-        email = json.loads(json_str.strip())
+        json_str = json_str.strip()
+        json_str = json_str.replace('\n', ' ').replace('\r', '')
+        email = json.loads(json_str)
         return jsonify(email)
+    except json.JSONDecodeError as e:
+        log.error(f"Email JSON parse error: {e}")
+        log.error(f"Raw response: {response_text[:500]}")
+        return jsonify({"error": f"Failed to parse email response: {str(e)}", "raw": response_text[:1000]}), 500
     except Exception as e:
         log.error(f"Email draft error: {e}")
         return jsonify({"error": str(e)}), 500
