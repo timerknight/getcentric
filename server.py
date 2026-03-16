@@ -180,7 +180,7 @@ def analyze_website():
             json_str = json_str.split("```")[1].split("```")[0]
         analysis = json.loads(json_str.strip())
         analysis["raw_response"] = response_text
-        analysis["model"] = "gemini-2.0-flash"
+        analysis["model"] = "gemini-2.5-flash"
         return jsonify(analysis)
     except Exception as e:
         log.error(f"Analysis error: {e}")
