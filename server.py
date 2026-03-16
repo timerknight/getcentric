@@ -170,7 +170,7 @@ def analyze_website():
         parts.append({"mime_type": "image/jpeg", "data": base64.b64decode(capture["screenshots"]["mobile"])})
         parts.append("Above: Mobile screenshot (375x812)")
     parts.append(prompt)
-    try:
+try:
         response = model.generate_content(parts, generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=4000))
         response_text = response.text
         json_str = response_text
@@ -178,10 +178,15 @@ def analyze_website():
             json_str = json_str.split("```json")[1].split("```")[0]
         elif "```" in json_str:
             json_str = json_str.split("```")[1].split("```")[0]
-        analysis = json.loads(json_str.strip())
-        analysis["raw_response"] = response_text
+        json_str = json_str.strip()
+        json_str = json_str.replace('\n', ' ').replace('\r', '')
+        analysis = json.loads(json_str)
         analysis["model"] = "gemini-2.5-flash"
         return jsonify(analysis)
+    except json.JSONDecodeError as e:
+        log.error(f"JSON parse error: {e}")
+        log.error(f"Raw response: {response_text[:500]}")
+        return jsonify({"error": f"Failed to parse AI response: {str(e)}", "raw": response_text[:1000]}), 500
     except Exception as e:
         log.error(f"Analysis error: {e}")
         return jsonify({"error": str(e)}), 500
