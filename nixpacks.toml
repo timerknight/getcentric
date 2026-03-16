@@ -1,5 +1,5 @@
 [phases.build]
-cmds = ["playwright install --with-deps chromium"]
+cmds = ["python -m playwright install --with-deps chromium"]
 
 [start]
 cmd = "python server.py"
