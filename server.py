@@ -160,7 +160,7 @@ def analyze_website():
     firm = request.json.get("firm", {})
     capture = request.json.get("capture", {})
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    model = genai.GenerativeModel("gemini-2.5-flash")
     prompt = build_analysis_prompt(firm, capture)
     parts = []
     if capture.get("screenshots", {}).get("desktop"):
@@ -218,7 +218,7 @@ def draft_email():
     analysis = request.json.get("analysis", {})
     showcase_url = request.json.get("showcase_url", "https://getcentric.design")
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    model = genai.GenerativeModel("gemini-2.5-flash")
     template_rec = analysis.get("template_recommendation", {})
     top_hooks = analysis.get("top_3_hooks", [])
     prompt = f"""Draft a cold outreach email to a CPA firm owner about redesigning their website.
