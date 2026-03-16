@@ -1,8 +1,8 @@
 [phases.install]
-cmds = ["pip install -r requirements.txt"]
+cmds = ["/opt/venv/bin/pip install -r requirements.txt"]
 
 [phases.build]
-cmds = ["playwright install --with-deps chromium"]
+cmds = ["/opt/venv/bin/playwright install --with-deps chromium"]
 
 [start]
-cmd = "python server.py"
+cmd = "/opt/venv/bin/python server.py"
