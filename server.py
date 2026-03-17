@@ -262,12 +262,27 @@ Rules: Subject references firm name. Opening compliments their practice. Body ci
 Return ONLY JSON. CRITICAL: In the body field use [BR] where you want line breaks. Do NOT use actual line breaks inside any string value.
 {{"subject": "subject here", "preview_text": "preview here", "body": "First paragraph[BR][BR]Second paragraph[BR][BR]Best,[BR]Timur"}}"""
 
-    try:
+try:
         response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.4, max_output_tokens=1000, response_mime_type="application/json"))
-        raw = response.text.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
-        email = json.loads(raw)
+        raw = response.text
+        # Try normal JSON parse first
+        try:
+            clean = raw.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+            email = json.loads(clean)
+        except json.JSONDecodeError:
+            # Fallback: extract fields with regex
+            import re
+            subject_m = re.search(r'"subject"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
+            preview_m = re.search(r'"preview_text"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
+            body_m = re.search(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
+            email = {
+                "subject": subject_m.group(1) if subject_m else "Website redesign for your firm",
+                "preview_text": preview_m.group(1) if preview_m else "I noticed some issues with your website",
+                "body": body_m.group(1) if body_m else raw[:500],
+            }
+            log.info("Used regex fallback for email parsing")
         if 'body' in email:
-            email['body'] = email['body'].replace('[BR]', '\n')
+            email['body'] = email['body'].replace('[BR]', '\n').replace('\\n', '\n')
         return jsonify(email)
     except Exception as e:
         log.error(f"Email draft error: {e}")
