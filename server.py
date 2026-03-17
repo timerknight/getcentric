@@ -253,13 +253,15 @@ URL: {showcase_url}/templates/{template_rec.get('template', 'neighbours').replac
 
 Rules: Subject references firm name. Opening compliments their practice. Body cites 2-3 specific issues. CTA links to template. Tone: professional peer. 150-200 words max. Sign as "Timur" from Centric.
 
-Return ONLY JSON (no markdown fences). CRITICAL: the body field must be a single line with NO line breaks. Use <br> where you want line breaks:
-{{"subject": "...", "preview_text": "First 80 chars", "body": "Single line email text using <br> for line breaks"}}"""
+Return ONLY JSON. CRITICAL: In the body field use [BR] where you want line breaks. Do NOT use actual line breaks inside any string value.
+{{"subject": "subject here", "preview_text": "preview here", "body": "First paragraph[BR][BR]Second paragraph[BR][BR]Best,[BR]Timur"}}"""
     
 try:
         response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.4, max_output_tokens=1000, response_mime_type="application/json"))
-        clean = fix_json_strings(response.text)
-        email = json.loads(clean)
+        raw = response.text.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+        email = json.loads(raw)
+        if 'body' in email:
+            email['body'] = email['body'].replace('[BR]', '\n')
         return jsonify(email)
     except Exception as e:
         log.error(f"Email draft error: {e}")
