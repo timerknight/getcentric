@@ -171,22 +171,10 @@ def analyze_website():
         parts.append("Above: Mobile screenshot (375x812)")
     parts.append(prompt)
 try:
-        response = model.generate_content(parts, generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=4000))
-        response_text = response.text
-        json_str = response_text
-        if "```json" in json_str:
-            json_str = json_str.split("```json")[1].split("```")[0]
-        elif "```" in json_str:
-            json_str = json_str.split("```")[1].split("```")[0]
-        json_str = json_str.strip()
-        json_str = json_str.replace('\n', ' ').replace('\r', '')
-        analysis = json.loads(json_str)
+        response = model.generate_content(parts, generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=4000, response_mime_type="application/json"))
+        analysis = json.loads(response.text)
         analysis["model"] = "gemini-2.5-flash"
         return jsonify(analysis)
-    except json.JSONDecodeError as e:
-        log.error(f"JSON parse error: {e}")
-        log.error(f"Raw response: {response_text[:500]}")
-        return jsonify({"error": f"Failed to parse AI response: {str(e)}", "raw": response_text[:1000]}), 500
     except Exception as e:
         log.error(f"Analysis error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -240,23 +228,9 @@ Return ONLY JSON (no markdown fences). CRITICAL: the body field must be a single
 {{"subject": "...", "preview_text": "First 80 chars", "body": "Single line email text using <br> for line breaks"}}"""
     
 try:
-        response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.4, max_output_tokens=1000))
-        response_text = response.text
-        json_str = response_text
-        if "```json" in json_str:
-            json_str = json_str.split("```json")[1].split("```")[0]
-        elif "```" in json_str:
-            json_str = json_str.split("```")[1].split("```")[0]
-        json_str = json_str.strip()
-        json_str = json_str.replace('\n', ' ').replace('\r', '').replace('\t', ' ')
-        email = json.loads(json_str)
-        if 'body' in email:
-            email['body'] = email['body'].replace('<br>', '\n')
+        response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.4, max_output_tokens=1000, response_mime_type="application/json"))
+        email = json.loads(response.text)
         return jsonify(email)
-    except json.JSONDecodeError as e:
-        log.error(f"Email JSON parse error: {e}")
-        log.error(f"Raw response: {response_text[:500]}")
-        return jsonify({"error": f"Failed to parse email response: {str(e)}", "raw": response_text[:1000]}), 500
     except Exception as e:
         log.error(f"Email draft error: {e}")
         return jsonify({"error": str(e)}), 500
