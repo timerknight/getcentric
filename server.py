@@ -236,8 +236,8 @@ URL: {showcase_url}/templates/{template_rec.get('template', 'neighbours').replac
 
 Rules: Subject references firm name. Opening compliments their practice. Body cites 2-3 specific issues. CTA links to template. Tone: professional peer. 150-200 words max. Sign as "Timur" from Centric.
 
-Return ONLY JSON (no markdown fences):
-{{"subject": "...", "preview_text": "First 80 chars", "body": "Full email with \\n line breaks"}}"""
+Return ONLY JSON (no markdown fences). CRITICAL: the body field must be a single line with NO line breaks. Use <br> where you want line breaks:
+{{"subject": "...", "preview_text": "First 80 chars", "body": "Single line email text using <br> for line breaks"}}"""
     
 try:
         response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.4, max_output_tokens=1000))
