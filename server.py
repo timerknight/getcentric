@@ -1,7 +1,7 @@
 """
 Centric Automation Server
 Flask API that n8n workflows call for each pipeline phase.
-Uses Google Gemini Pro for AI analysis and email drafting.
+Uses Google Gemini for AI analysis and email drafting.
 """
 
 import os
@@ -17,6 +17,7 @@ load_dotenv()
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("centric")
+
 
 # -- Phase 1: Discovery --
 
@@ -42,7 +43,8 @@ def discover_firms():
                     pid = place.get("place_id")
                     if pid and pid not in all_firms:
                         all_firms[pid] = {
-                            "place_id": pid, "name": place.get("name", ""),
+                            "place_id": pid,
+                            "name": place.get("name", ""),
                             "address": place.get("formatted_address", ""),
                             "rating": place.get("rating", 0),
                             "review_count": place.get("user_ratings_total", 0),
@@ -150,7 +152,12 @@ def capture_website():
         log.error(f"Capture error for {url}: {e}")
         result["error"] = str(e)
     return jsonify(result)
+
+
+# -- Helper: fix newlines inside JSON strings --
+
 def fix_json_strings(text):
+    """Walk through text char by char and escape literal newlines inside JSON string values."""
     result = []
     in_string = False
     escape_next = False
@@ -171,7 +178,6 @@ def fix_json_strings(text):
             result.append('\\n')
             continue
         if in_string and ch == '\r':
-            result.append('\\r')
             continue
         if in_string and ch == '\t':
             result.append('\\t')
@@ -180,7 +186,7 @@ def fix_json_strings(text):
     return ''.join(result)
 
 
-# -- Phase 3: AI Analysis (Gemini Pro) --
+# -- Phase 3: AI Analysis (Gemini) --
 
 @app.route("/api/analyze", methods=["POST"])
 def analyze_website():
@@ -198,7 +204,7 @@ def analyze_website():
         parts.append({"mime_type": "image/jpeg", "data": base64.b64decode(capture["screenshots"]["mobile"])})
         parts.append("Above: Mobile screenshot (375x812)")
     parts.append(prompt)
-try:
+    try:
         response = model.generate_content(parts, generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=4000, response_mime_type="application/json"))
         clean = fix_json_strings(response.text)
         analysis = json.loads(clean)
@@ -231,7 +237,7 @@ Scoring: 1-3 severely outdated, 4-5 below average, 6-7 acceptable (skip), 8-10 m
 Templates: neighbours=warm/family, cornerstone=established/prestigious, honest=modern/direct, local_roots=community-grounded, trusted_advisor=premium/high-net-worth."""
 
 
-# -- Phase 4: Email Draft (Gemini Pro) --
+# -- Phase 4: Email Draft (Gemini) --
 
 @app.route("/api/draft-email", methods=["POST"])
 def draft_email():
@@ -251,12 +257,12 @@ ISSUES: 1. {top_hooks[0] if len(top_hooks) > 0 else 'N/A'} 2. {top_hooks[1] if l
 TEMPLATE: {template_rec.get('template', 'neighbours')}
 URL: {showcase_url}/templates/{template_rec.get('template', 'neighbours').replace('_', '-')}.html
 
-Rules: Subject references firm name. Opening compliments their practice. Body cites 2-3 specific issues. CTA links to template. Tone: professional peer. 150-200 words max. Sign as "Timur" from Centric.
+Rules: Subject references firm name. Opening compliments their practice. Body cites 2-3 specific issues. CTA links to template. Tone: professional peer. 150-200 words max. Sign as Timur from Centric.
 
 Return ONLY JSON. CRITICAL: In the body field use [BR] where you want line breaks. Do NOT use actual line breaks inside any string value.
 {{"subject": "subject here", "preview_text": "preview here", "body": "First paragraph[BR][BR]Second paragraph[BR][BR]Best,[BR]Timur"}}"""
-    
-try:
+
+    try:
         response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.4, max_output_tokens=1000, response_mime_type="application/json"))
         raw = response.text.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
         email = json.loads(raw)
