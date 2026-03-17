@@ -150,6 +150,34 @@ def capture_website():
         log.error(f"Capture error for {url}: {e}")
         result["error"] = str(e)
     return jsonify(result)
+def fix_json_strings(text):
+    result = []
+    in_string = False
+    escape_next = False
+    for ch in text:
+        if escape_next:
+            result.append(ch)
+            escape_next = False
+            continue
+        if ch == '\\' and in_string:
+            result.append(ch)
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            result.append(ch)
+            continue
+        if in_string and ch == '\n':
+            result.append('\\n')
+            continue
+        if in_string and ch == '\r':
+            result.append('\\r')
+            continue
+        if in_string and ch == '\t':
+            result.append('\\t')
+            continue
+        result.append(ch)
+    return ''.join(result)
 
 
 # -- Phase 3: AI Analysis (Gemini Pro) --
@@ -172,7 +200,8 @@ def analyze_website():
     parts.append(prompt)
 try:
         response = model.generate_content(parts, generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=4000, response_mime_type="application/json"))
-        analysis = json.loads(response.text)
+        clean = fix_json_strings(response.text)
+        analysis = json.loads(clean)
         analysis["model"] = "gemini-2.5-flash"
         return jsonify(analysis)
     except Exception as e:
@@ -229,7 +258,8 @@ Return ONLY JSON (no markdown fences). CRITICAL: the body field must be a single
     
 try:
         response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.4, max_output_tokens=1000, response_mime_type="application/json"))
-        email = json.loads(response.text)
+        clean = fix_json_strings(response.text)
+        email = json.loads(clean)
         return jsonify(email)
     except Exception as e:
         log.error(f"Email draft error: {e}")
