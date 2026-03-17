@@ -248,8 +248,10 @@ try:
         elif "```" in json_str:
             json_str = json_str.split("```")[1].split("```")[0]
         json_str = json_str.strip()
-        json_str = json_str.replace('\n', ' ').replace('\r', '')
+        json_str = json_str.replace('\n', ' ').replace('\r', '').replace('\t', ' ')
         email = json.loads(json_str)
+        if 'body' in email:
+            email['body'] = email['body'].replace('<br>', '\n')
         return jsonify(email)
     except json.JSONDecodeError as e:
         log.error(f"Email JSON parse error: {e}")
