@@ -213,7 +213,7 @@ def extract_email_regex(raw):
     return {
         "subject": subject_m.group(1) if subject_m else "Website redesign for your firm",
         "preview_text": preview_m.group(1) if preview_m else "I noticed some issues with your website",
-        "body": body_m.group(1) if body_m else "Hi, I reviewed your website and found several areas for improvement. I specialize in modern CPA firm websites. Would you be open to a quick call? Best, Timur from Centric",
+        "body": body_m.group(1) if body_m else "Hi, I reviewed your website and found several areas for improvement. I specialize in modern CPA firm websites. Would you be open to a quick call? Best, Temir from Centric",
     }
 
 
@@ -348,7 +348,7 @@ I actually mocked up what a refreshed version of your site could look like using
 No pressure at all -- if you like what you see, I'd love a quick 10-minute call to walk through the specifics. If the timing isn't right, no worries.
 
 Best,
-Timur Gulyayev
+Temir Gulyayev
 Founder, Centric
 getcentric.design | hello@getcentric.design"""
 
@@ -419,7 +419,7 @@ def send_email():
     from sendgrid.helpers.mail import Mail
     data = request.json
     sg = SendGridAPIClient(os.environ["SENDGRID_API_KEY"])
-    message = Mail(from_email=(data.get("from_email", "hello@getcentric.design"), data.get("from_name", "Timur from Centric")), to_emails=data["to_email"], subject=data["subject"], plain_text_content=data["body"])
+    message = Mail(from_email=(data.get("from_email", "hello@getcentric.design"), data.get("from_name", "Temir from Centric")), to_emails=data["to_email"], subject=data["subject"], plain_text_content=data["body"])
     try:
         response = sg.send(message)
         return jsonify({"sent": True, "status_code": response.status_code, "to": data["to_email"]})
