@@ -155,40 +155,58 @@ def capture_website():
     return jsonify(result)
 
 
-# -- Helper: fix newlines inside JSON strings --
+# -- Helpers --
 
-def fix_json_strings(text):
-    """Walk through text char by char and escape literal newlines inside JSON string values."""
-    result = []
-    in_string = False
-    escape_next = False
-    for ch in text:
-        if escape_next:
-            result.append(ch)
-            escape_next = False
-            continue
-        if ch == '\\' and in_string:
-            result.append(ch)
-            escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            result.append(ch)
-            continue
-        if in_string and ch == '\n':
-            result.append('\\n')
-            continue
-        if in_string and ch == '\r':
-            continue
-        if in_string and ch == '\t':
-            result.append('\\t')
-            continue
-        result.append(ch)
-    return ''.join(result)
+def safe_parse_json(raw_text):
+    """Try multiple strategies to parse JSON from AI response."""
+    text = raw_text
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0]
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0]
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    try:
+        fixed = []
+        in_str = False
+        esc = False
+        for ch in text:
+            if esc:
+                fixed.append(ch)
+                esc = False
+                continue
+            if ch == '\\' and in_str:
+                fixed.append(ch)
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                fixed.append(ch)
+                continue
+            if in_str and ch == '\n':
+                fixed.append('\\n')
+                continue
+            if in_str and ch == '\r':
+                continue
+            if in_str and ch == '\t':
+                fixed.append('\\t')
+                continue
+            fixed.append(ch)
+        return json.loads(''.join(fixed))
+    except Exception:
+        pass
+    try:
+        return json.loads(text.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' '))
+    except Exception:
+        pass
+    return None
 
 
 def extract_email_regex(raw):
-    """Fallback: extract email fields from malformed JSON using regex."""
+    """Last resort: extract email fields using regex."""
     subject_m = re.search(r'"subject"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
     preview_m = re.search(r'"preview_text"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
     body_m = re.search(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
@@ -196,6 +214,20 @@ def extract_email_regex(raw):
         "subject": subject_m.group(1) if subject_m else "Website redesign for your firm",
         "preview_text": preview_m.group(1) if preview_m else "I noticed some issues with your website",
         "body": body_m.group(1) if body_m else "Hi, I reviewed your website and found several areas for improvement. I specialize in modern CPA firm websites. Would you be open to a quick call? Best, Timur from Centric",
+    }
+
+
+def extract_analysis_fallback():
+    """Last resort: return default analysis when parsing fails."""
+    return {
+        "composite_score": 4,
+        "visual_design": {"score": 4, "issues": ["Unable to parse detailed analysis"], "outreach_hooks": ["Your website could benefit from a modern redesign"]},
+        "seo_health": {"score": 4, "issues": ["SEO analysis unavailable"], "outreach_hooks": ["SEO improvements could increase your visibility"]},
+        "mobile_quality": {"score": 4, "issues": ["Mobile analysis unavailable"], "outreach_hooks": ["Mobile optimization could improve user experience"]},
+        "content_quality": {"score": 4, "issues": ["Content analysis unavailable"], "outreach_hooks": ["Content improvements could attract more clients"]},
+        "top_3_hooks": ["Your website could benefit from a modern redesign", "SEO improvements could increase your local visibility", "Mobile optimization would improve the experience for phone users"],
+        "template_recommendation": {"archetype": "small_local_practice", "template": "neighbours", "reasoning": "Default recommendation"},
+        "firm_personality": "Local CPA practice",
     }
 
 
@@ -219,13 +251,18 @@ def analyze_website():
     parts.append(prompt)
     try:
         response = model.generate_content(parts, generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=4000, response_mime_type="application/json"))
-        clean = fix_json_strings(response.text)
-        analysis = json.loads(clean)
+        analysis = safe_parse_json(response.text)
+        if analysis is None:
+            log.warning(f"Analysis JSON parse failed, using fallback. Raw: {response.text[:200]}")
+            analysis = extract_analysis_fallback()
         analysis["model"] = "gemini-2.5-flash"
         return jsonify(analysis)
     except Exception as e:
         log.error(f"Analysis error: {e}")
-        return jsonify({"error": str(e)}), 500
+        fallback = extract_analysis_fallback()
+        fallback["model"] = "gemini-2.5-flash"
+        fallback["parse_error"] = str(e)
+        return jsonify(fallback)
 
 
 def build_analysis_prompt(firm, capture):
@@ -278,19 +315,10 @@ Return ONLY JSON. CRITICAL: In the body field use [BR] where you want line break
     try:
         response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.4, max_output_tokens=1000, response_mime_type="application/json"))
         raw = response.text
-        # Attempt 1: fix_json_strings
-        try:
-            clean = fix_json_strings(raw)
-            email = json.loads(clean)
-        except json.JSONDecodeError:
-            # Attempt 2: brute force newline removal
-            try:
-                clean2 = raw.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
-                email = json.loads(clean2)
-            except json.JSONDecodeError:
-                # Attempt 3: regex extraction - always works
-                email = extract_email_regex(raw)
-                log.info("Used regex fallback for email parsing")
+        email = safe_parse_json(raw)
+        if email is None:
+            email = extract_email_regex(raw)
+            log.info("Used regex fallback for email parsing")
         if 'body' in email:
             email['body'] = email['body'].replace('[BR]', '\n').replace('\\n', '\n')
         return jsonify(email)
@@ -304,8 +332,8 @@ Return ONLY JSON. CRITICAL: In the body field use [BR] where you want line break
 @app.route("/api/telegram/send-approval", methods=["POST"])
 def send_telegram_approval():
     import requests as req
-    bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
-    chat_id = os.environ["TELEGRAM_CHAT_ID"]
+    bot_token = os.environ["TELEGRAM_BOT_TOKEN"].strip()
+    chat_id = os.environ["TELEGRAM_CHAT_ID"].strip()
     firm = request.json.get("firm", {})
     analysis = request.json.get("analysis", {})
     email = request.json.get("email", {})
@@ -327,12 +355,14 @@ Top Issues:
 {chr(10).join(f'• {h}' for h in analysis.get('top_3_hooks', [])[:3])}"""
     keyboard = {"inline_keyboard": [[{"text": "✅ APPROVE", "callback_data": f"approve_{approval_id}"}, {"text": "⏭ SKIP", "callback_data": f"skip_{approval_id}"}, {"text": "✏️ EDIT", "callback_data": f"edit_{approval_id}"}]]}
     try:
-        resp = req.post(f"https://api.telegram.org/bot{bot_token.strip()}/sendMessage", json={"chat_id": chat_id.strip(), "text": message, "parse_mode": "Markdown", "reply_markup": keyboard})
-        if not resp.json().get("ok"):
-            log.warning(f"Telegram Markdown failed, retrying without formatting")
+        resp = req.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown", "reply_markup": keyboard})
+        tg_result = resp.json()
+        if not tg_result.get("ok"):
+            log.warning(f"Telegram Markdown failed: {tg_result}, retrying plain text")
             message_plain = message.replace('*', '').replace('_', '')
-            resp = req.post(f"https://api.telegram.org/bot{bot_token.strip()}/sendMessage", json={"chat_id": chat_id.strip(), "text": message_plain, "reply_markup": keyboard})
-        return jsonify({"sent": True, "approval_id": approval_id, "telegram_response": resp.json()})
+            resp = req.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": chat_id, "text": message_plain, "reply_markup": keyboard})
+            tg_result = resp.json()
+        return jsonify({"sent": tg_result.get("ok", False), "approval_id": approval_id, "telegram_response": tg_result})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -366,19 +396,19 @@ def send_email():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+# -- Test & Health --
+
 @app.route("/api/test-telegram", methods=["GET"])
 def test_telegram():
     import requests as req
-    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     log.info(f"Token length: {len(bot_token)}, Chat ID: '{chat_id}'")
-    resp = req.post(f"https://api.telegram.org/bot{bot_token.strip()}/sendMessage", json={"chat_id": chat_id.strip(), "text": "Test from Centric server"})
+    resp = req.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": chat_id, "text": "Test from Centric server"})
     return jsonify({"token_length": len(bot_token), "chat_id": chat_id, "telegram_response": resp.json()})
-```
 
-Commit, push, then open this in your browser:
-```
-https://getcentric-production.up.railway.app/api/test-telegram
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "service": "centric-automation", "timestamp": datetime.now().isoformat()})
