@@ -327,7 +327,11 @@ Top Issues:
 {chr(10).join(f'• {h}' for h in analysis.get('top_3_hooks', [])[:3])}"""
     keyboard = {"inline_keyboard": [[{"text": "✅ APPROVE", "callback_data": f"approve_{approval_id}"}, {"text": "⏭ SKIP", "callback_data": f"skip_{approval_id}"}, {"text": "✏️ EDIT", "callback_data": f"edit_{approval_id}"}]]}
     try:
-        resp = req.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown", "reply_markup": keyboard})
+        resp = req.post(f"https://api.telegram.org/bot{bot_token.strip()}/sendMessage", json={"chat_id": chat_id.strip(), "text": message, "parse_mode": "Markdown", "reply_markup": keyboard})
+        if not resp.json().get("ok"):
+            log.warning(f"Telegram Markdown failed, retrying without formatting")
+            message_plain = message.replace('*', '').replace('_', '')
+            resp = req.post(f"https://api.telegram.org/bot{bot_token.strip()}/sendMessage", json={"chat_id": chat_id.strip(), "text": message_plain, "reply_markup": keyboard})
         return jsonify({"sent": True, "approval_id": approval_id, "telegram_response": resp.json()})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
