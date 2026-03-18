@@ -287,7 +287,7 @@ Scoring: 1-3 severely outdated, 4-5 below average, 6-7 acceptable (skip), 8-10 m
 Templates: neighbours=warm/family, cornerstone=established/prestigious, honest=modern/direct, local_roots=community-grounded, trusted_advisor=premium/high-net-worth."""
 
 
-# -- Phase 4: Email Draft (Gemini) --
+# -- Phase 4: Email Draft (Template-based) --
 
 @app.route("/api/draft-email", methods=["POST"])
 def draft_email():
@@ -299,32 +299,62 @@ def draft_email():
     model = genai.GenerativeModel("gemini-2.5-flash")
     template_rec = analysis.get("template_recommendation", {})
     top_hooks = analysis.get("top_3_hooks", [])
-    prompt = f"""Draft a cold outreach email to a CPA firm owner about redesigning their website.
+    template_name = template_rec.get("template", "neighbours").replace("_", "-")
+    template_url = f"{showcase_url}/templates/{template_name}.html"
+    firm_name = firm.get("name", "your firm")
+    firm_address = firm.get("address", "")
+    rating = firm.get("rating", "")
+    review_count = firm.get("review_count", 0)
+    issue_1 = top_hooks[0] if len(top_hooks) > 0 else "Missing local SEO optimization"
+    issue_2 = top_hooks[1] if len(top_hooks) > 1 else "No mobile-responsive design"
+    issue_3 = top_hooks[2] if len(top_hooks) > 2 else "Outdated visual design"
 
-FIRM: {firm.get('name')} in {firm.get('address')}
-SCORE: {analysis.get('composite_score')}/10
-ISSUES: 1. {top_hooks[0] if len(top_hooks) > 0 else 'N/A'} 2. {top_hooks[1] if len(top_hooks) > 1 else 'N/A'} 3. {top_hooks[2] if len(top_hooks) > 2 else 'N/A'}
-TEMPLATE: {template_rec.get('template', 'neighbours')}
-URL: {showcase_url}/templates/{template_rec.get('template', 'neighbours').replace('_', '-')}.html
+    # Ask Gemini for just a subject line and a one-sentence compliment
+    prompt = f"""For a CPA firm called {firm_name} with a {rating}-star Google rating and {review_count} reviews, write two things:
+1. A short email subject line (under 60 chars) that references their firm name, is not salesy, sounds like a peer reaching out
+2. A one-sentence genuine compliment about their practice based on their rating and reviews
 
-Rules: Subject references firm name. Opening compliments their practice. Body cites 2-3 specific issues. CTA links to template. Tone: professional peer. 150-200 words max. Sign as Timur from Centric.
-
-Return ONLY JSON. CRITICAL: In the body field use [BR] where you want line breaks. Do NOT use actual line breaks inside any string value.
-{{"subject": "subject here", "preview_text": "preview here", "body": "First paragraph[BR][BR]Second paragraph[BR][BR]Best,[BR]Timur"}}"""
+Return ONLY JSON with two fields. No line breaks inside values.
+{{"subject": "subject here", "compliment": "one sentence compliment here"}}"""
 
     try:
-        response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.4, max_output_tokens=1000, response_mime_type="application/json"))
-        raw = response.text
-        email = safe_parse_json(raw)
-        if email is None:
-            email = extract_email_regex(raw)
-            log.info("Used regex fallback for email parsing")
-        if 'body' in email:
-            email['body'] = email['body'].replace('[BR]', '\n').replace('\\n', '\n')
-        return jsonify(email)
-    except Exception as e:
-        log.error(f"Email draft error: {e}")
-        return jsonify({"error": str(e)}), 500
+        response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.4, max_output_tokens=200, response_mime_type="application/json"))
+        parts = safe_parse_json(response.text)
+        if parts is None:
+            parts = {"subject": f"Quick note about {firm_name}'s website", "compliment": f"Your {rating}-star rating with {review_count} reviews says a lot about the quality of your work."}
+        subject = parts.get("subject", f"Quick note about {firm_name}'s website")
+        compliment = parts.get("compliment", f"Your {rating}-star rating with {review_count} reviews says a lot about the quality of your work.")
+    except Exception:
+        subject = f"Quick note about {firm_name}'s website"
+        compliment = f"Your {rating}-star rating with {review_count} reviews says a lot about the quality of your work."
+
+    # Assemble the plain text email from template
+    body = f"""Hi,
+
+I came across {firm_name} while researching CPA firms in the area -- {compliment}
+
+I took a quick look at your website and noticed a few things that might be costing you potential clients:
+
+-> {issue_1}
+-> {issue_2}
+-> {issue_3}
+
+I run Centric -- we build modern, SEO-optimized websites exclusively for CPA firms. We don't work with restaurants or dentists. Just accountants. That focus means every template, every page, every CTA is built around how accounting clients actually search and make decisions.
+
+I actually mocked up what a refreshed version of your site could look like using one of our CPA-specific templates. You can preview it here:
+
+{template_url}
+
+No pressure at all -- if you like what you see, I'd love a quick 10-minute call to walk through the specifics. If the timing isn't right, no worries.
+
+Best,
+Timur Gulyayev
+Founder, Centric
+getcentric.design | hello@getcentric.design"""
+
+    preview_text = f"I noticed a few things about {firm_name}'s website that might be worth a look"
+
+    return jsonify({"subject": subject, "preview_text": preview_text, "body": body})
 
 
 # -- Phase 5: Telegram Approval --
