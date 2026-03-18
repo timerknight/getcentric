@@ -19,6 +19,9 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("centric")
 
+# Simple in-memory set of contacted firm place_ids (persists until redeploy)
+contacted_firms = set()
+
 
 # -- Phase 1: Discovery --
 
@@ -91,8 +94,33 @@ def filter_firms():
         elif not firm.get("website"):
             no_website.append(firm)
         else:
-            qualified.append(firm)
+            # Check dedup
+            pid = firm.get("place_id", "")
+            if pid in contacted_firms:
+                firm["skip_reason"] = "already_contacted"
+                skipped.append(firm)
+            else:
+                qualified.append(firm)
     return jsonify({"qualified": qualified, "no_website": no_website, "skipped": skipped, "counts": {"qualified": len(qualified), "no_website": len(no_website), "skipped": len(skipped)}})
+
+
+# -- Dedup endpoints --
+
+@app.route("/api/mark-contacted", methods=["POST"])
+def mark_contacted():
+    """Mark a firm as contacted so it won't be processed again."""
+    place_id = request.json.get("place_id", "")
+    firm_name = request.json.get("firm_name", "")
+    if place_id:
+        contacted_firms.add(place_id)
+        log.info(f"Marked as contacted: {firm_name} ({place_id}). Total: {len(contacted_firms)}")
+    return jsonify({"marked": True, "place_id": place_id, "total_contacted": len(contacted_firms)})
+
+
+@app.route("/api/contacted-list", methods=["GET"])
+def contacted_list():
+    """View all contacted firm IDs."""
+    return jsonify({"contacted": list(contacted_firms), "total": len(contacted_firms)})
 
 
 # -- Phase 2: Capture --
@@ -158,7 +186,6 @@ def capture_website():
 # -- Helpers --
 
 def safe_parse_json(raw_text):
-    """Try multiple strategies to parse JSON from AI response."""
     text = raw_text
     if "```json" in text:
         text = text.split("```json")[1].split("```")[0]
@@ -206,7 +233,6 @@ def safe_parse_json(raw_text):
 
 
 def extract_analysis_fallback():
-    """Last resort: return default analysis when parsing fails."""
     return {
         "composite_score": 4,
         "visual_design": {"score": 4, "issues": ["Unable to parse detailed analysis"], "outreach_hooks": ["Your website could benefit from a modern redesign"]},
@@ -297,7 +323,6 @@ def draft_email():
     template_name = template_rec.get("template", "neighbours").replace("_", "-")
     template_url = f"{showcase_url}/templates/{template_name}.html"
     firm_name = firm.get("name", "your firm")
-    firm_address = firm.get("address", "")
     rating = firm.get("rating", "")
     review_count = firm.get("review_count", 0)
     issue_1 = top_hooks[0] if len(top_hooks) > 0 else "Your firm doesn't show up in Google's local results when people search for CPAs nearby"
@@ -323,11 +348,9 @@ Return ONLY JSON with two fields. No line breaks inside values.
         subject = f"Quick note about {firm_name}'s website"
         compliment = f"Your {rating}-star rating with {review_count} reviews says a lot about the quality of your work."
 
-    # Handle missing rating gracefully
     if not rating or rating == 0:
         compliment = "It's clear from your online presence that you've built a solid practice."
 
-    # Assemble the plain text email from template
     body = (
         f"Hi,\n"
         f"\n"
@@ -355,7 +378,71 @@ Return ONLY JSON with two fields. No line breaks inside values.
 
     preview_text = f"I noticed a few things about {firm_name}'s website that might be worth a look"
 
-    return jsonify({"subject": subject, "preview_text": preview_text, "body": body})
+    return jsonify({"subject": subject, "preview_text": preview_text, "body": body, "template_url": template_url, "firm_name": firm_name})
+
+
+# -- Phase 4B: Follow-up Emails --
+
+@app.route("/api/follow-up-1", methods=["POST"])
+def follow_up_1():
+    """Follow-up #1: sent 3 days after initial email. Short, references original, adds urgency."""
+    data = request.json
+    firm_name = data.get("firm_name", "your firm")
+    template_url = data.get("template_url", "https://getcentric.design")
+
+    subject = f"Following up -- {firm_name}'s website"
+
+    body = (
+        f"Hi,\n"
+        f"\n"
+        f"I sent a note a few days ago about {firm_name}'s website. Wanted to make sure it didn't get buried.\n"
+        f"\n"
+        f"The quick version: I found a few specific issues that are likely costing you visibility on Google and making it harder for potential clients to reach you on their phones.\n"
+        f"\n"
+        f"I put together a preview of what a refreshed site could look like for your firm:\n"
+        f"\n"
+        f"{template_url}\n"
+        f"\n"
+        f"Happy to walk you through it in 10 minutes -- or just take a look and let me know what you think.\n"
+        f"\n"
+        f"Best,\n"
+        f"Temir Gulyayev\n"
+        f"Founder, Centric\n"
+        f"getcentric.design | hello@getcentric.design"
+    )
+
+    return jsonify({"subject": subject, "body": body})
+
+
+@app.route("/api/follow-up-2", methods=["POST"])
+def follow_up_2():
+    """Follow-up #2: sent 7 days after initial email. Final touch, different angle, social proof."""
+    data = request.json
+    firm_name = data.get("firm_name", "your firm")
+    template_url = data.get("template_url", "https://getcentric.design")
+
+    subject = f"Last note -- {firm_name}"
+
+    body = (
+        f"Hi,\n"
+        f"\n"
+        f"This is my last follow-up -- I know you're busy running a practice.\n"
+        f"\n"
+        f"One thing I didn't mention: over 50% of people searching for a CPA now do it from their phone. If your site doesn't work well on mobile, those potential clients are going to a competitor who shows up first on Google.\n"
+        f"\n"
+        f"We've helped other small CPA firms fix exactly this. The preview I built for {firm_name} is still live here:\n"
+        f"\n"
+        f"{template_url}\n"
+        f"\n"
+        f"If the timing isn't right, no worries at all. But if you're curious, I'm happy to show you a version customized for your firm -- takes 5 minutes on a call.\n"
+        f"\n"
+        f"All the best,\n"
+        f"Temir Gulyayev\n"
+        f"Founder, Centric\n"
+        f"getcentric.design | hello@getcentric.design"
+    )
+
+    return jsonify({"subject": subject, "body": body})
 
 
 # -- Phase 5: Telegram Approval --
@@ -431,6 +518,11 @@ def send_email():
     message.add_content(Content("text/html", body_html))
     try:
         response = sg.send(message)
+        # Mark firm as contacted after successful send
+        place_id = data.get("place_id", "")
+        if place_id:
+            contacted_firms.add(place_id)
+            log.info(f"Email sent and firm marked as contacted: {place_id}")
         return jsonify({"sent": True, "status_code": response.status_code, "to": data["to_email"]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -443,7 +535,6 @@ def test_telegram():
     import requests as req
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    log.info(f"Token length: {len(bot_token)}, Chat ID: '{chat_id}'")
     resp = req.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": chat_id, "text": "Test from Centric server"})
     return jsonify({"token_length": len(bot_token), "chat_id": chat_id, "telegram_response": resp.json()})
 
