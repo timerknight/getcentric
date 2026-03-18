@@ -205,18 +205,6 @@ def safe_parse_json(raw_text):
     return None
 
 
-def extract_email_regex(raw):
-    """Last resort: extract email fields using regex."""
-    subject_m = re.search(r'"subject"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
-    preview_m = re.search(r'"preview_text"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
-    body_m = re.search(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
-    return {
-        "subject": subject_m.group(1) if subject_m else "Website redesign for your firm",
-        "preview_text": preview_m.group(1) if preview_m else "I noticed some issues with your website",
-        "body": body_m.group(1) if body_m else "Hi, I reviewed your website and found several areas for improvement. I specialize in modern CPA firm websites. Would you be open to a quick call? Best, Temir from Centric",
-    }
-
-
 def extract_analysis_fallback():
     """Last resort: return default analysis when parsing fails."""
     return {
@@ -280,8 +268,15 @@ TECH: SSL: {tech.get('has_ssl', False)} | Viewport: {tech.get('has_viewport_meta
 
 MOBILE: Viewport: {mobile.get('viewport_present', False)} | Overflow: {mobile.get('horizontal_overflow', False)} | Small taps: {mobile.get('small_tap_targets', 0)}/{mobile.get('total_tap_targets', 0)} | Mobile nav: {mobile.get('has_mobile_nav', False)} | Phone tappable: {mobile.get('phone_is_tappable', False)}
 
+IMPORTANT: The top_3_hooks must be written in plain business language that a non-technical CPA firm owner would understand. Do NOT use technical jargon like "schema markup", "viewport meta tag", "tap targets", or "SSL certificate". Instead write things like:
+- "Your firm doesn't appear in Google's local results map when people search for CPAs nearby"
+- "Your website is hard to use on phones -- buttons are too small to tap and text is hard to read"
+- "Visitors see a 'Not Secure' warning in their browser when they visit your site"
+- "Your site takes over 5 seconds to load -- most visitors leave after 3"
+- "There's no way for potential clients to book a consultation or contact you easily"
+
 Return ONLY a JSON object (no markdown fences):
-{{"composite_score": <1-10>, "visual_design": {{"score": <1-10>, "issues": [...], "outreach_hooks": [...]}}, "seo_health": {{"score": <1-10>, "issues": [...], "outreach_hooks": [...]}}, "mobile_quality": {{"score": <1-10>, "issues": [...], "outreach_hooks": [...]}}, "content_quality": {{"score": <1-10>, "issues": [...], "outreach_hooks": [...]}}, "top_3_hooks": ["hook1", "hook2", "hook3"], "template_recommendation": {{"archetype": "small_local_practice", "template": "neighbours|cornerstone|honest|local_roots|trusted_advisor", "reasoning": "why"}}, "firm_personality": "brief description"}}
+{{"composite_score": <1-10>, "visual_design": {{"score": <1-10>, "issues": [...], "outreach_hooks": [...]}}, "seo_health": {{"score": <1-10>, "issues": [...], "outreach_hooks": [...]}}, "mobile_quality": {{"score": <1-10>, "issues": [...], "outreach_hooks": [...]}}, "content_quality": {{"score": <1-10>, "issues": [...], "outreach_hooks": [...]}}, "top_3_hooks": ["plain language hook 1", "plain language hook 2", "plain language hook 3"], "template_recommendation": {{"archetype": "small_local_practice", "template": "neighbours|cornerstone|honest|local_roots|trusted_advisor", "reasoning": "why"}}, "firm_personality": "brief description"}}
 
 Scoring: 1-3 severely outdated, 4-5 below average, 6-7 acceptable (skip), 8-10 modern (skip).
 Templates: neighbours=warm/family, cornerstone=established/prestigious, honest=modern/direct, local_roots=community-grounded, trusted_advisor=premium/high-net-worth."""
@@ -305,9 +300,9 @@ def draft_email():
     firm_address = firm.get("address", "")
     rating = firm.get("rating", "")
     review_count = firm.get("review_count", 0)
-    issue_1 = top_hooks[0] if len(top_hooks) > 0 else "Missing local SEO optimization"
-    issue_2 = top_hooks[1] if len(top_hooks) > 1 else "No mobile-responsive design"
-    issue_3 = top_hooks[2] if len(top_hooks) > 2 else "Outdated visual design"
+    issue_1 = top_hooks[0] if len(top_hooks) > 0 else "Your firm doesn't show up in Google's local results when people search for CPAs nearby"
+    issue_2 = top_hooks[1] if len(top_hooks) > 1 else "Your website is difficult to use on mobile phones"
+    issue_3 = top_hooks[2] if len(top_hooks) > 2 else "The site design looks dated compared to other firms in your area"
 
     # Ask Gemini for just a subject line and a one-sentence compliment
     prompt = f"""For a CPA firm called {firm_name} with a {rating}-star Google rating and {review_count} reviews, write two things:
@@ -321,36 +316,42 @@ Return ONLY JSON with two fields. No line breaks inside values.
         response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.4, max_output_tokens=200, response_mime_type="application/json"))
         parts = safe_parse_json(response.text)
         if parts is None:
-            parts = {"subject": f"Quick note about {firm_name}'s website", "compliment": f"Your {rating}-star rating with {review_count} reviews says a lot about the quality of your work."}
+            parts = {}
         subject = parts.get("subject", f"Quick note about {firm_name}'s website")
         compliment = parts.get("compliment", f"Your {rating}-star rating with {review_count} reviews says a lot about the quality of your work.")
     except Exception:
         subject = f"Quick note about {firm_name}'s website"
         compliment = f"Your {rating}-star rating with {review_count} reviews says a lot about the quality of your work."
 
+    # Handle missing rating gracefully
+    if not rating or rating == 0:
+        compliment = "It's clear from your online presence that you've built a solid practice."
+
     # Assemble the plain text email from template
-    body = f"""Hi,
-
-I came across {firm_name} while researching CPA firms in the area -- {compliment}
-
-I took a quick look at your website and noticed a few things that might be costing you potential clients:
-
--> {issue_1}
--> {issue_2}
--> {issue_3}
-
-I run Centric -- we build modern, SEO-optimized websites exclusively for CPA firms. We don't work with restaurants or dentists. Just accountants. That focus means every template, every page, every CTA is built around how accounting clients actually search and make decisions.
-
-I actually mocked up what a refreshed version of your site could look like using one of our CPA-specific templates. You can preview it here:
-
-{template_url}
-
-No pressure at all -- if you like what you see, I'd love a quick 10-minute call to walk through the specifics. If the timing isn't right, no worries.
-
-Best,
-Temir Gulyayev
-Founder, Centric
-getcentric.design | hello@getcentric.design"""
+    body = (
+        f"Hi,\n"
+        f"\n"
+        f"I came across {firm_name} while researching CPA firms in the area -- {compliment}\n"
+        f"\n"
+        f"I took a quick look at your website and noticed a few things that might be costing you potential clients:\n"
+        f"\n"
+        f"  -> {issue_1}\n"
+        f"  -> {issue_2}\n"
+        f"  -> {issue_3}\n"
+        f"\n"
+        f"I run Centric -- we build modern, SEO-optimized websites exclusively for CPA firms. We don't work with restaurants or dentists. Just accountants. That focus means every template, every page, every CTA is built around how accounting clients actually search and make decisions.\n"
+        f"\n"
+        f"I actually mocked up what a refreshed version of your site could look like using one of our CPA-specific templates. You can preview it here:\n"
+        f"\n"
+        f"{template_url}\n"
+        f"\n"
+        f"No pressure at all -- if you like what you see, I'd love a quick 10-minute call to walk through the specifics. If the timing isn't right, no worries.\n"
+        f"\n"
+        f"Best,\n"
+        f"Temir Gulyayev\n"
+        f"Founder, Centric\n"
+        f"getcentric.design | hello@getcentric.design"
+    )
 
     preview_text = f"I noticed a few things about {firm_name}'s website that might be worth a look"
 
@@ -416,10 +417,18 @@ def telegram_webhook():
 @app.route("/api/send-email", methods=["POST"])
 def send_email():
     from sendgrid import SendGridAPIClient
-    from sendgrid.helpers.mail import Mail
+    from sendgrid.helpers.mail import Mail, Content
     data = request.json
     sg = SendGridAPIClient(os.environ["SENDGRID_API_KEY"])
-    message = Mail(from_email=(data.get("from_email", "hello@getcentric.design"), data.get("from_name", "Temir from Centric")), to_emails=data["to_email"], subject=data["subject"], plain_text_content=data["body"])
+    body_text = data.get("body", "")
+    body_html = body_text.replace('\n', '<br>\n')
+    message = Mail(
+        from_email=(data.get("from_email", "hello@getcentric.design"), data.get("from_name", "Temir from Centric")),
+        to_emails=data["to_email"],
+        subject=data["subject"],
+    )
+    message.add_content(Content("text/plain", body_text))
+    message.add_content(Content("text/html", body_html))
     try:
         response = sg.send(message)
         return jsonify({"sent": True, "status_code": response.status_code, "to": data["to_email"]})
