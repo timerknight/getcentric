@@ -5,6 +5,7 @@ Uses Google Gemini for AI analysis and email drafting.
 """
 
 import os
+import re
 import json
 import base64
 import hashlib
@@ -186,6 +187,18 @@ def fix_json_strings(text):
     return ''.join(result)
 
 
+def extract_email_regex(raw):
+    """Fallback: extract email fields from malformed JSON using regex."""
+    subject_m = re.search(r'"subject"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
+    preview_m = re.search(r'"preview_text"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
+    body_m = re.search(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
+    return {
+        "subject": subject_m.group(1) if subject_m else "Website redesign for your firm",
+        "preview_text": preview_m.group(1) if preview_m else "I noticed some issues with your website",
+        "body": body_m.group(1) if body_m else "Hi, I reviewed your website and found several areas for improvement. I specialize in modern CPA firm websites. Would you be open to a quick call? Best, Timur from Centric",
+    }
+
+
 # -- Phase 3: AI Analysis (Gemini) --
 
 @app.route("/api/analyze", methods=["POST"])
@@ -262,25 +275,22 @@ Rules: Subject references firm name. Opening compliments their practice. Body ci
 Return ONLY JSON. CRITICAL: In the body field use [BR] where you want line breaks. Do NOT use actual line breaks inside any string value.
 {{"subject": "subject here", "preview_text": "preview here", "body": "First paragraph[BR][BR]Second paragraph[BR][BR]Best,[BR]Timur"}}"""
 
-try:
+    try:
         response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.4, max_output_tokens=1000, response_mime_type="application/json"))
         raw = response.text
-        # Try normal JSON parse first
+        # Attempt 1: fix_json_strings
         try:
-            clean = raw.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+            clean = fix_json_strings(raw)
             email = json.loads(clean)
         except json.JSONDecodeError:
-            # Fallback: extract fields with regex
-            import re
-            subject_m = re.search(r'"subject"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
-            preview_m = re.search(r'"preview_text"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
-            body_m = re.search(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
-            email = {
-                "subject": subject_m.group(1) if subject_m else "Website redesign for your firm",
-                "preview_text": preview_m.group(1) if preview_m else "I noticed some issues with your website",
-                "body": body_m.group(1) if body_m else raw[:500],
-            }
-            log.info("Used regex fallback for email parsing")
+            # Attempt 2: brute force newline removal
+            try:
+                clean2 = raw.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+                email = json.loads(clean2)
+            except json.JSONDecodeError:
+                # Attempt 3: regex extraction - always works
+                email = extract_email_regex(raw)
+                log.info("Used regex fallback for email parsing")
         if 'body' in email:
             email['body'] = email['body'].replace('[BR]', '\n').replace('\\n', '\n')
         return jsonify(email)
