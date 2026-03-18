@@ -366,7 +366,19 @@ def send_email():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/test-telegram", methods=["GET"])
+def test_telegram():
+    import requests as req
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    log.info(f"Token length: {len(bot_token)}, Chat ID: '{chat_id}'")
+    resp = req.post(f"https://api.telegram.org/bot{bot_token.strip()}/sendMessage", json={"chat_id": chat_id.strip(), "text": "Test from Centric server"})
+    return jsonify({"token_length": len(bot_token), "chat_id": chat_id, "telegram_response": resp.json()})
+```
 
+Commit, push, then open this in your browser:
+```
+https://getcentric-production.up.railway.app/api/test-telegram
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "service": "centric-automation", "timestamp": datetime.now().isoformat()})
