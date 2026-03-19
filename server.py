@@ -11,6 +11,7 @@ import base64
 import hashlib
 import logging
 from datetime import datetime
+from urllib.parse import urljoin, urlparse
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
@@ -19,8 +20,85 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("centric")
 
-# Simple in-memory set of contacted firm place_ids (persists until redeploy)
-contacted_firms = set()
+EMAIL_PATTERN = re.compile(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}')
+JUNK_EMAILS = {'example.com', 'domain.com', 'email.com', 'yoursite.com', 'sentry.io',
+               'wixpress.com', 'googleapis.com', 'w3.org', 'schema.org', 'wordpress.org',
+               'gravatar.com', 'squarespace.com'}
+
+
+def find_emails_on_page(page):
+    """Extract emails from mailto links AND page text."""
+    raw = page.evaluate("""() => {
+        const mailto = [...document.querySelectorAll('a[href^="mailto:"]')].map(a => a.href.replace('mailto:', '').split('?')[0]);
+        const text = document.body?.innerText || '';
+        return { mailto, text };
+    }""")
+    emails = set(raw.get('mailto', []))
+    text_emails = EMAIL_PATTERN.findall(raw.get('text', ''))
+    emails.update(text_emails)
+    # Filter out junk
+    cleaned = set()
+    for e in emails:
+        e = e.lower().strip()
+        domain = e.split('@')[1] if '@' in e else ''
+        if domain and domain not in JUNK_EMAILS and not e.endswith('.png') and not e.endswith('.jpg'):
+            cleaned.add(e)
+    return cleaned
+
+
+def find_contact_links(page, base_url):
+    """Find links to contact, about, team pages."""
+    links = page.evaluate("""() => {
+        return [...document.querySelectorAll('a[href]')].map(a => ({
+            text: (a.textContent || '').trim().toLowerCase(),
+            href: a.href
+        }));
+    }""")
+    contact_keywords = ['contact', 'about', 'team', 'staff', 'reach', 'get in touch',
+                        'connect', 'our people', 'our team', 'meet us', 'email us']
+    found = set()
+    base_domain = urlparse(base_url).netloc
+    for link in links:
+        text = link.get('text', '')
+        href = link.get('href', '')
+        if not href or href.startswith('javascript:') or href.startswith('#'):
+            continue
+        link_domain = urlparse(href).netloc
+        if link_domain and link_domain != base_domain:
+            continue
+        if any(kw in text for kw in contact_keywords) or any(kw in href.lower() for kw in ['contact', 'about', 'team', 'staff']):
+            found.add(href)
+    return list(found)[:5]
+
+
+def deep_scrape_emails(url):
+    """Visit homepage + contact/about pages to find all email addresses."""
+    from playwright.sync_api import sync_playwright
+    all_emails = set()
+    pages_visited = []
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            # Visit homepage
+            page.goto(url, timeout=30000, wait_until="networkidle")
+            homepage_emails = find_emails_on_page(page)
+            all_emails.update(homepage_emails)
+            pages_visited.append({"url": url, "emails_found": list(homepage_emails)})
+            # Find and visit contact/about pages
+            contact_links = find_contact_links(page, url)
+            for link in contact_links:
+                try:
+                    page.goto(link, timeout=20000, wait_until="networkidle")
+                    page_emails = find_emails_on_page(page)
+                    all_emails.update(page_emails)
+                    pages_visited.append({"url": link, "emails_found": list(page_emails)})
+                except Exception as e:
+                    log.warning(f"Could not visit {link}: {e}")
+            browser.close()
+    except Exception as e:
+        log.error(f"Deep scrape error for {url}: {e}")
+    return list(all_emails), pages_visited
 
 
 # -- Phase 1: Discovery --
@@ -94,33 +172,8 @@ def filter_firms():
         elif not firm.get("website"):
             no_website.append(firm)
         else:
-            # Check dedup
-            pid = firm.get("place_id", "")
-            if pid in contacted_firms:
-                firm["skip_reason"] = "already_contacted"
-                skipped.append(firm)
-            else:
-                qualified.append(firm)
+            qualified.append(firm)
     return jsonify({"qualified": qualified, "no_website": no_website, "skipped": skipped, "counts": {"qualified": len(qualified), "no_website": len(no_website), "skipped": len(skipped)}})
-
-
-# -- Dedup endpoints --
-
-@app.route("/api/mark-contacted", methods=["POST"])
-def mark_contacted():
-    """Mark a firm as contacted so it won't be processed again."""
-    place_id = request.json.get("place_id", "")
-    firm_name = request.json.get("firm_name", "")
-    if place_id:
-        contacted_firms.add(place_id)
-        log.info(f"Marked as contacted: {firm_name} ({place_id}). Total: {len(contacted_firms)}")
-    return jsonify({"marked": True, "place_id": place_id, "total_contacted": len(contacted_firms)})
-
-
-@app.route("/api/contacted-list", methods=["GET"])
-def contacted_list():
-    """View all contacted firm IDs."""
-    return jsonify({"contacted": list(contacted_firms), "total": len(contacted_firms)})
 
 
 # -- Phase 2: Capture --
@@ -149,7 +202,7 @@ def capture_website():
                     images: [...document.querySelectorAll('img')].map(img => ({src: img.src, alt: img.alt || ''})).slice(0, 30),
                     forms: [...document.querySelectorAll('form')].map(f => ({action: f.action, fields: [...f.querySelectorAll('input,textarea,select')].map(i => i.name || i.type)})),
                     phone_links: [...document.querySelectorAll('a[href^="tel:"]')].map(a => a.href),
-                    email_links: [...new Set([...document.querySelectorAll('a[href^="mailto:"]')].map(a => a.href.replace('mailto:', '')).concat((document.body?.innerText || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || []))],
+                    email_links: [...new Set([...document.querySelectorAll('a[href^="mailto:"]')].map(a => a.href.replace('mailto:', '').split('?')[0]).concat((document.body?.innerText || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g) || []))],
                     schema: (() => { const scripts = [...document.querySelectorAll('script[type="application/ld+json"]')]; return scripts.map(s => { try { return JSON.parse(s.textContent); } catch { return null; } }).filter(Boolean); })(),
                     copyright_text: (() => { const m = (document.body?.innerText || '').match(/©\\s*(\\d{4})/); return m ? m[1] : ''; })()
                 };
@@ -164,7 +217,19 @@ def capture_website():
             }""")
             timing = desktop.evaluate("() => { const t = performance.timing; return { load_time_ms: t.loadEventEnd - t.navigationStart }; }")
             result["tech"]["load_time_ms"] = timing.get("load_time_ms", 0)
+            # Also find and visit contact pages for emails
+            contact_links = find_contact_links(desktop, url)
+            all_emails = set(result["scraped"].get("email_links", []))
+            for link in contact_links:
+                try:
+                    desktop.goto(link, timeout=20000, wait_until="networkidle")
+                    page_emails = find_emails_on_page(desktop)
+                    all_emails.update(page_emails)
+                except Exception:
+                    pass
+            result["scraped"]["email_links"] = list(all_emails)
             desktop.close()
+            # Mobile screenshot
             mobile = browser.new_page(viewport={"width": 375, "height": 812}, user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)")
             mobile.goto(url, timeout=30000, wait_until="networkidle")
             result["screenshots"]["mobile"] = base64.b64encode(mobile.screenshot(type="jpeg", quality=80)).decode()
@@ -181,6 +246,37 @@ def capture_website():
         log.error(f"Capture error for {url}: {e}")
         result["error"] = str(e)
     return jsonify(result)
+
+
+# -- Phase 2b: Deep Email Scrape (for reruns) --
+
+@app.route("/api/scrape-email", methods=["POST"])
+def scrape_email():
+    """
+    Deep scrape a website for email addresses.
+    Visits homepage + contact/about/team pages.
+    Input: { "url": "https://example.com", "name": "Firm Name" }
+    Output: { "emails": [...], "best_email": "...", "pages_visited": [...] }
+    """
+    url = request.json.get("url")
+    name = request.json.get("name", "")
+    if not url:
+        return jsonify({"error": "url required"}), 400
+    emails, pages = deep_scrape_emails(url)
+    # Pick the best email (prefer info@, contact@, or one matching firm name)
+    best = ""
+    name_parts = name.lower().split()
+    for e in emails:
+        local = e.split('@')[0].lower()
+        if local in ['info', 'contact', 'office', 'hello', 'admin']:
+            best = e
+            break
+        if any(part in local for part in name_parts if len(part) > 2):
+            best = e
+            break
+    if not best and emails:
+        best = emails[0]
+    return jsonify({"emails": emails, "best_email": best, "pages_visited": pages, "url": url})
 
 
 # -- Helpers --
@@ -323,13 +419,13 @@ def draft_email():
     template_name = template_rec.get("template", "neighbours").replace("_", "-")
     template_url = f"{showcase_url}/templates/{template_name}.html"
     firm_name = firm.get("name", "your firm")
+    firm_address = firm.get("address", "")
     rating = firm.get("rating", "")
     review_count = firm.get("review_count", 0)
     issue_1 = top_hooks[0] if len(top_hooks) > 0 else "Your firm doesn't show up in Google's local results when people search for CPAs nearby"
     issue_2 = top_hooks[1] if len(top_hooks) > 1 else "Your website is difficult to use on mobile phones"
     issue_3 = top_hooks[2] if len(top_hooks) > 2 else "The site design looks dated compared to other firms in your area"
 
-    # Ask Gemini for just a subject line and a one-sentence compliment
     prompt = f"""For a CPA firm called {firm_name} with a {rating}-star Google rating and {review_count} reviews, write two things:
 1. A short email subject line (under 60 chars) that references their firm name, is not salesy, sounds like a peer reaching out
 2. A one-sentence genuine compliment about their practice based on their rating and reviews
@@ -378,71 +474,7 @@ Return ONLY JSON with two fields. No line breaks inside values.
 
     preview_text = f"I noticed a few things about {firm_name}'s website that might be worth a look"
 
-    return jsonify({"subject": subject, "preview_text": preview_text, "body": body, "template_url": template_url, "firm_name": firm_name})
-
-
-# -- Phase 4B: Follow-up Emails --
-
-@app.route("/api/follow-up-1", methods=["POST"])
-def follow_up_1():
-    """Follow-up #1: sent 3 days after initial email. Short, references original, adds urgency."""
-    data = request.json
-    firm_name = data.get("firm_name", "your firm")
-    template_url = data.get("template_url", "https://getcentric.design")
-
-    subject = f"Following up -- {firm_name}'s website"
-
-    body = (
-        f"Hi,\n"
-        f"\n"
-        f"I sent a note a few days ago about {firm_name}'s website. Wanted to make sure it didn't get buried.\n"
-        f"\n"
-        f"The quick version: I found a few specific issues that are likely costing you visibility on Google and making it harder for potential clients to reach you on their phones.\n"
-        f"\n"
-        f"I put together a preview of what a refreshed site could look like for your firm:\n"
-        f"\n"
-        f"{template_url}\n"
-        f"\n"
-        f"Happy to walk you through it in 10 minutes -- or just take a look and let me know what you think.\n"
-        f"\n"
-        f"Best,\n"
-        f"Temir Gulyayev\n"
-        f"Founder, Centric\n"
-        f"getcentric.design | hello@getcentric.design"
-    )
-
-    return jsonify({"subject": subject, "body": body})
-
-
-@app.route("/api/follow-up-2", methods=["POST"])
-def follow_up_2():
-    """Follow-up #2: sent 7 days after initial email. Final touch, different angle, social proof."""
-    data = request.json
-    firm_name = data.get("firm_name", "your firm")
-    template_url = data.get("template_url", "https://getcentric.design")
-
-    subject = f"Last note -- {firm_name}"
-
-    body = (
-        f"Hi,\n"
-        f"\n"
-        f"This is my last follow-up -- I know you're busy running a practice.\n"
-        f"\n"
-        f"One thing I didn't mention: over 50% of people searching for a CPA now do it from their phone. If your site doesn't work well on mobile, those potential clients are going to a competitor who shows up first on Google.\n"
-        f"\n"
-        f"We've helped other small CPA firms fix exactly this. The preview I built for {firm_name} is still live here:\n"
-        f"\n"
-        f"{template_url}\n"
-        f"\n"
-        f"If the timing isn't right, no worries at all. But if you're curious, I'm happy to show you a version customized for your firm -- takes 5 minutes on a call.\n"
-        f"\n"
-        f"All the best,\n"
-        f"Temir Gulyayev\n"
-        f"Founder, Centric\n"
-        f"getcentric.design | hello@getcentric.design"
-    )
-
-    return jsonify({"subject": subject, "body": body})
+    return jsonify({"subject": subject, "preview_text": preview_text, "body": body})
 
 
 # -- Phase 5: Telegram Approval --
@@ -456,7 +488,6 @@ def send_telegram_approval():
     analysis = request.json.get("analysis", {})
     email = request.json.get("email", {})
     place_id = firm.get('place_id', 'unknown')
-    approval_id = place_id
     message = f"""🏢 *{firm.get('name', 'Unknown Firm')}*
 📍 {firm.get('address', '')}
 ⭐ {firm.get('rating', 'N/A')} ({firm.get('review_count', 0)} reviews)
@@ -481,7 +512,7 @@ Top Issues:
             message_plain = message.replace('*', '').replace('_', '')
             resp = req.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": chat_id, "text": message_plain, "reply_markup": keyboard})
             tg_result = resp.json()
-        return jsonify({"sent": tg_result.get("ok", False), "approval_id": approval_id, "telegram_response": tg_result})
+        return jsonify({"sent": tg_result.get("ok", False), "approval_id": place_id, "telegram_response": tg_result})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -519,11 +550,6 @@ def send_email():
     message.add_content(Content("text/html", body_html))
     try:
         response = sg.send(message)
-        # Mark firm as contacted after successful send
-        place_id = data.get("place_id", "")
-        if place_id:
-            contacted_firms.add(place_id)
-            log.info(f"Email sent and firm marked as contacted: {place_id}")
         return jsonify({"sent": True, "status_code": response.status_code, "to": data["to_email"]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
