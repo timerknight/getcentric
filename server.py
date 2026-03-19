@@ -455,7 +455,8 @@ def send_telegram_approval():
     firm = request.json.get("firm", {})
     analysis = request.json.get("analysis", {})
     email = request.json.get("email", {})
-    approval_id = hashlib.md5(f"{firm.get('place_id', '')}{datetime.now().isoformat()}".encode()).hexdigest()[:12]
+    place_id = firm.get('place_id', 'unknown')
+    approval_id = place_id
     message = f"""🏢 *{firm.get('name', 'Unknown Firm')}*
 📍 {firm.get('address', '')}
 ⭐ {firm.get('rating', 'N/A')} ({firm.get('review_count', 0)} reviews)
@@ -471,7 +472,7 @@ def send_telegram_approval():
 
 Top Issues:
 {chr(10).join(f'• {h}' for h in analysis.get('top_3_hooks', [])[:3])}"""
-    keyboard = {"inline_keyboard": [[{"text": "✅ APPROVE", "callback_data": f"approve_{approval_id}"}, {"text": "⏭ SKIP", "callback_data": f"skip_{approval_id}"}, {"text": "✏️ EDIT", "callback_data": f"edit_{approval_id}"}]]}
+    keyboard = {"inline_keyboard": [[{"text": "✅ APPROVE", "callback_data": f"approve_{place_id[:30]}"}, {"text": "⏭ SKIP", "callback_data": f"skip_{place_id[:30]}"}, {"text": "✏️ EDIT", "callback_data": f"edit_{place_id[:30]}"}]]}
     try:
         resp = req.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown", "reply_markup": keyboard})
         tg_result = resp.json()
