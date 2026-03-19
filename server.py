@@ -149,7 +149,7 @@ def capture_website():
                     images: [...document.querySelectorAll('img')].map(img => ({src: img.src, alt: img.alt || ''})).slice(0, 30),
                     forms: [...document.querySelectorAll('form')].map(f => ({action: f.action, fields: [...f.querySelectorAll('input,textarea,select')].map(i => i.name || i.type)})),
                     phone_links: [...document.querySelectorAll('a[href^="tel:"]')].map(a => a.href),
-                    email_links: [...document.querySelectorAll('a[href^="mailto:"]')].map(a => a.href.replace('mailto:', '')),
+                    email_links: [...new Set([...document.querySelectorAll('a[href^="mailto:"]')].map(a => a.href.replace('mailto:', '')).concat((document.body?.innerText || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || []))],
                     schema: (() => { const scripts = [...document.querySelectorAll('script[type="application/ld+json"]')]; return scripts.map(s => { try { return JSON.parse(s.textContent); } catch { return null; } }).filter(Boolean); })(),
                     copyright_text: (() => { const m = (document.body?.innerText || '').match(/©\\s*(\\d{4})/); return m ? m[1] : ''; })()
                 };
