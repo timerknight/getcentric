@@ -536,7 +536,40 @@ def telegram_webhook():
     return jsonify({"action": action, "approval_id": approval_id, "timestamp": datetime.now().isoformat()})
 
 
-# -- Phase 6: Send Email --
+# -- Phase 6: Send Email (with auto warm-up throttle) --
+
+# In-memory daily send counter (resets on server restart, which is fine for Railway)
+_send_counter = {"date": "", "count": 0}
+
+# Warm-up schedule: week number -> max emails per day
+WARMUP_SCHEDULE = {1: 5, 2: 10, 3: 20, 4: 30, 5: 40}
+WARMUP_MAX = 50  # Week 6+ cap
+
+
+def get_daily_limit():
+    """Calculate today's send limit based on weeks since WARMUP_START_DATE env var."""
+    start_str = os.environ.get("WARMUP_START_DATE", "")
+    if not start_str:
+        return WARMUP_MAX  # No start date set = no throttle
+    try:
+        start = datetime.strptime(start_str, "%Y-%m-%d")
+        days_since = (datetime.now() - start).days
+        week = max(1, (days_since // 7) + 1)
+        limit = WARMUP_SCHEDULE.get(week, WARMUP_MAX)
+        return limit
+    except Exception:
+        return WARMUP_MAX
+
+
+def check_daily_limit():
+    """Returns (allowed, daily_limit, sent_today). Thread-safe enough for single-worker Flask."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    if _send_counter["date"] != today:
+        _send_counter["date"] = today
+        _send_counter["count"] = 0
+    limit = get_daily_limit()
+    return _send_counter["count"] < limit, limit, _send_counter["count"]
+
 
 @app.route("/api/send-email", methods=["POST"])
 def send_email():
@@ -545,6 +578,11 @@ def send_email():
     import requests as req
     data = request.json
     to_email = data.get("to_email", "")
+    # Check daily warm-up limit
+    allowed, limit, sent_today = check_daily_limit()
+    if not allowed:
+        log.info(f"Daily limit reached ({sent_today}/{limit}). Queued: {to_email}")
+        return jsonify({"sent": False, "reason": "daily_limit_reached", "limit": limit, "sent_today": sent_today, "to": to_email})
     sg = SendGridAPIClient(os.environ["SENDGRID_API_KEY"])
     # Check SendGrid global suppressions before sending
     try:
@@ -571,9 +609,32 @@ def send_email():
     message.add_content(Content("text/html", body_html))
     try:
         response = sg.send(message)
-        return jsonify({"sent": True, "status_code": response.status_code, "to": to_email})
+        _send_counter["count"] += 1
+        log.info(f"Email sent ({_send_counter['count']}/{limit} today): {to_email}")
+        return jsonify({"sent": True, "status_code": response.status_code, "to": to_email, "sent_today": _send_counter["count"], "daily_limit": limit})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/send-status", methods=["GET"])
+def send_status():
+    """Check current warm-up status and daily send count."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    if _send_counter["date"] != today:
+        sent = 0
+    else:
+        sent = _send_counter["count"]
+    limit = get_daily_limit()
+    start_str = os.environ.get("WARMUP_START_DATE", "not set")
+    if start_str != "not set":
+        try:
+            start = datetime.strptime(start_str, "%Y-%m-%d")
+            week = max(1, ((datetime.now() - start).days // 7) + 1)
+        except Exception:
+            week = "unknown"
+    else:
+        week = "no warmup"
+    return jsonify({"date": today, "sent_today": sent, "daily_limit": limit, "warmup_week": week, "warmup_start": start_str})
 
 
 # -- Unsubscribe --
