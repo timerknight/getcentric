@@ -447,6 +447,9 @@ Return ONLY JSON with two fields. No line breaks inside values.
     if not rating or rating == 0:
         compliment = "It's clear from your online presence that you've built a solid practice."
 
+    # Build unsubscribe URL
+    server_url = os.environ.get("SERVER_URL", "https://getcentric-production.up.railway.app")
+
     body = (
         f"Hi,\n"
         f"\n"
@@ -469,12 +472,14 @@ Return ONLY JSON with two fields. No line breaks inside values.
         f"Best,\n"
         f"Temir Gulyayev\n"
         f"Founder, Centric\n"
-        f"getcentric.design | hello@getcentric.design"
+        f"getcentric.design | hello@getcentric.design\n"
+        f"\n"
+        f"---\n"
+        f"Centric Design LLC | 30 N Gould St Ste N, Sheridan, WY 82801\n"
+        f"Don't want to hear from us? {server_url}/unsubscribe?email={{{{EMAIL}}}}"
     )
 
-    preview_text = f"I noticed a few things about {firm_name}'s website that might be worth a look"
-
-    return jsonify({"subject": subject, "preview_text": preview_text, "body": body})
+    return jsonify({"subject": subject, "preview_text": preview_text, "body": body, "template_url": template_url})
 
 
 # -- Phase 5: Telegram Approval --
@@ -537,22 +542,78 @@ def telegram_webhook():
 def send_email():
     from sendgrid import SendGridAPIClient
     from sendgrid.helpers.mail import Mail, Content
+    import requests as req
     data = request.json
+    to_email = data.get("to_email", "")
     sg = SendGridAPIClient(os.environ["SENDGRID_API_KEY"])
-    body_text = data.get("body", "")
+    # Check SendGrid global suppressions before sending
+    try:
+        check = req.get(
+            f"https://api.sendgrid.com/v3/suppression/unsubscribes",
+            headers={"Authorization": f"Bearer {os.environ['SENDGRID_API_KEY']}"},
+            timeout=5
+        )
+        suppressed = [s.get("email", "") for s in check.json()] if check.status_code == 200 else []
+        if to_email.lower() in [s.lower() for s in suppressed]:
+            log.info(f"Skipping suppressed email: {to_email}")
+            return jsonify({"sent": False, "reason": "unsubscribed", "to": to_email})
+    except Exception as e:
+        log.warning(f"Suppression check failed, sending anyway: {e}")
+    # Replace {{EMAIL}} placeholder with actual recipient email
+    body_text = data.get("body", "").replace("{{EMAIL}}", to_email)
     body_html = body_text.replace('\n', '<br>\n')
     message = Mail(
         from_email=(data.get("from_email", "hello@getcentric.design"), data.get("from_name", "Temir from Centric")),
-        to_emails=data["to_email"],
+        to_emails=to_email,
         subject=data["subject"],
     )
     message.add_content(Content("text/plain", body_text))
     message.add_content(Content("text/html", body_html))
     try:
         response = sg.send(message)
-        return jsonify({"sent": True, "status_code": response.status_code, "to": data["to_email"]})
+        return jsonify({"sent": True, "status_code": response.status_code, "to": to_email})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# -- Unsubscribe --
+
+@app.route("/unsubscribe", methods=["GET"])
+def unsubscribe():
+    import requests as req
+    email = request.args.get("email", "").strip().lower()
+    if not email or "@" not in email:
+        return "<html><body style='font-family:sans-serif;text-align:center;padding:60px'><h2>Invalid request</h2><p>No email address provided.</p></body></html>", 400
+    # Add to SendGrid global unsubscribes
+    try:
+        req.post(
+            "https://api.sendgrid.com/v3/asm/suppressions/global",
+            headers={
+                "Authorization": f"Bearer {os.environ['SENDGRID_API_KEY']}",
+                "Content-Type": "application/json"
+            },
+            json={"recipient_emails": [email]},
+            timeout=5
+        )
+        log.info(f"Unsubscribed: {email}")
+    except Exception as e:
+        log.error(f"Unsubscribe API error: {e}")
+    return f"""<html>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;text-align:center;padding:60px 20px;color:#2a2a2a;background:#faf8f5">
+<div style="max-width:480px;margin:0 auto">
+<h2 style="font-size:22px;font-weight:500;margin:0 0 12px">You've been unsubscribed</h2>
+<p style="font-size:15px;color:#666;line-height:1.6;margin:0 0 20px">
+<strong>{email}</strong> has been removed from our mailing list. You won't receive any further emails from Centric.
+</p>
+<p style="font-size:13px;color:#999">
+If this was a mistake, reply to any previous email from us and we'll re-add you.
+</p>
+<p style="font-size:12px;color:#bbb;margin-top:30px">
+Centric Design LLC | 30 N Gould St Ste N, Sheridan, WY 82801
+</p>
+</div>
+</body>
+</html>"""
 
 
 # -- Test & Health --
