@@ -479,6 +479,8 @@ Return ONLY JSON with two fields. No line breaks inside values.
         f"Don't want to hear from us? {server_url}/unsubscribe?email={{{{EMAIL}}}}"
     )
 
+    preview_text = f"I noticed a few things about {firm_name}'s website that might be worth a look"
+
     return jsonify({"subject": subject, "preview_text": preview_text, "body": body, "template_url": template_url})
 
 
