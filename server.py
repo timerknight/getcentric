@@ -57,13 +57,13 @@ def find_contact_links(page, base_url):
     contact_keywords = ['contact', 'about', 'team', 'staff', 'reach', 'get in touch',
                         'connect', 'our people', 'our team', 'meet us', 'email us']
     found = set()
-    base_domain = urlparse(base_url).netloc
+    base_domain = urlparse(base_url).netloc.replace('www.', '')
     for link in links:
         text = link.get('text', '')
         href = link.get('href', '')
         if not href or href.startswith('javascript:') or href.startswith('#'):
             continue
-        link_domain = urlparse(href).netloc
+        link_domain = urlparse(href).netloc.replace('www.', '')
         if link_domain and link_domain != base_domain:
             continue
         if any(kw in text for kw in contact_keywords) or any(kw in href.lower() for kw in ['contact', 'about', 'team', 'staff']):
@@ -219,15 +219,25 @@ def capture_website():
             result["tech"]["load_time_ms"] = timing.get("load_time_ms", 0)
             # Also find and visit contact pages for emails
             contact_links = find_contact_links(desktop, url)
+            log.info(f"Found {len(contact_links)} contact links for {url}: {contact_links}")
             all_emails = set(result["scraped"].get("email_links", []))
             for link in contact_links:
                 try:
                     desktop.goto(link, timeout=20000, wait_until="networkidle")
                     page_emails = find_emails_on_page(desktop)
+                    log.info(f"Emails found on {link}: {page_emails}")
                     all_emails.update(page_emails)
-                except Exception:
-                    pass
-            result["scraped"]["email_links"] = list(all_emails)
+                except Exception as e:
+                    log.warning(f"Failed to visit contact page {link}: {e}")
+            # Filter out junk emails
+            cleaned_emails = set()
+            for e in all_emails:
+                e_lower = e.lower().strip()
+                domain = e_lower.split('@')[1] if '@' in e_lower else ''
+                if domain and domain not in JUNK_EMAILS and not e_lower.endswith('.png') and not e_lower.endswith('.jpg'):
+                    cleaned_emails.add(e_lower)
+            result["scraped"]["email_links"] = list(cleaned_emails)
+            log.info(f"Final emails for {url}: {result['scraped']['email_links']}")
             desktop.close()
             # Mobile screenshot
             mobile = browser.new_page(viewport={"width": 375, "height": 812}, user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)")
