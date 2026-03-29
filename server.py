@@ -405,7 +405,10 @@ IMPORTANT: The top_3_hooks must be written in plain business language that a non
 - "Your website is hard to use on phones -- buttons are too small to tap and text is hard to read"
 - "Visitors see a 'Not Secure' warning in their browser when they visit your site"
 - "Your site takes over 5 seconds to load -- most visitors leave after 3"
-- "There's no way for potential clients to book a consultation or contact you easily"
+- "Your website doesn't tell visitors what makes you different from dozens of other CPA firms in their area"
+- "Your homepage has no client testimonials or social proof to help new visitors trust your firm"
+- "Potential clients can't see your team or who they'd be working with -- there are no staff photos or bios"
+
 
 Return ONLY a JSON object (no markdown fences):
 {{"composite_score": <1-10>, "visual_design": {{"score": <1-10>, "issues": [...], "outreach_hooks": [...]}}, "seo_health": {{"score": <1-10>, "issues": [...], "outreach_hooks": [...]}}, "mobile_quality": {{"score": <1-10>, "issues": [...], "outreach_hooks": [...]}}, "content_quality": {{"score": <1-10>, "issues": [...], "outreach_hooks": [...]}}, "top_3_hooks": ["plain language hook 1", "plain language hook 2", "plain language hook 3"], "template_recommendation": {{"archetype": "small_local_practice", "template": "neighbours|cornerstone|honest|local_roots|trusted_advisor", "reasoning": "why"}}, "firm_personality": "brief description"}}
@@ -473,7 +476,7 @@ Return ONLY JSON with two fields. No line breaks inside values.
         f"\n"
         f"I run Centric -- we build modern, SEO-optimized websites exclusively for CPA firms. We don't work with restaurants or dentists. Just accountants. That focus means every template, every page, every CTA is built around how accounting clients actually search and make decisions.\n"
         f"\n"
-        f"I actually mocked up what a refreshed version of your site could look like using one of our CPA-specific templates. You can preview it here:\n"
+        f"I put together a template designed specifically for firms like yours. You can preview it here:\n"
         f"\n"
         f"{template_url}\n"
         f"\n"
